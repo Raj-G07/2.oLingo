@@ -150,7 +150,7 @@ wss.on('connection', (ws: WebSocket) => {
         console.log(`[WS] Client disconnected: ${socketId}`);
     });
 
-    ws.on('error', (err) => {
+    ws.on('error', (err:Error) => {
         console.error(`[WS] WebSocket error for ${socketId}:`, err);
     });
 });
