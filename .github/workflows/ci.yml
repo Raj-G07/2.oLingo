@@ -21,7 +21,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: "npm"
+          cache-dependency-path: |
+            linguasync-server/package-lock.json
+            linguasync-client/package-lock.json
 
       # ---------------- SERVER ----------------
       - name: Install server dependencies
