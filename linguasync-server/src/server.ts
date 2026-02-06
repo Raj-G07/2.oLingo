@@ -102,7 +102,7 @@ wss.on("connection", (ws: WebSocket) => {
   ws.send(JSON.stringify(initPayload));
   ws.send(JSON.stringify({ type: "MCP_READY" }));
 
-  ws.on("message", async (rawData: WebSocket.RawData) => {
+  ws.on("message", async (rawData) => {
     try {
       const msg = JSON.parse(rawData.toString()) as IncomingMessage;
 
