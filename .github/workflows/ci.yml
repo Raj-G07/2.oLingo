@@ -34,9 +34,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-${{ matrix.node-version }}-
 
-      - name: Install deps (root)
-        run: npm install
-
       - name: Install deps (server)
         working-directory: linguasync-server
         run: npm install
