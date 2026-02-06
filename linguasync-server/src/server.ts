@@ -1,158 +1,203 @@
-import dotenv from 'dotenv';
-import express from 'express';
-import { WebSocketServer, WebSocket } from 'ws';
-import { LingoMCP } from './mcp-client';
-import http from 'http';
+import dotenv from "dotenv";
+import express from "express";
+import http from "http";
+import { WebSocketServer, WebSocket } from "ws";
+import { LingoMCP } from "./mcp-client";
 
-dotenv.config({ path: '../.env' });
+dotenv.config({ path: "../.env" });
+
+/* -------------------------------------------------------------------------- */
+/*                               Type Definitions                              */
+/* -------------------------------------------------------------------------- */
+
+type LangCode = string;
+
+interface InitMessage {
+  type: "INIT";
+  socketId: string;
+}
+
+interface JoinMessage {
+  type: "join";
+  lang: LangCode;
+}
+
+interface ChatMessage {
+  type: "chat";
+  content: string;
+}
+
+interface DocEditPayload {
+  content: string;
+  docId: string;
+}
+
+interface DocEditMessage {
+  type: "doc_edit";
+  content: string; // JSON stringified DocEditPayload
+}
+
+type IncomingMessage = JoinMessage | ChatMessage | DocEditMessage;
+
+interface OutgoingMessage {
+  type: "msg";
+  id: string;
+  sender: string;
+  content: string;
+  targetLang: LangCode;
+  sourceLang: LangCode;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               App Bootstrap                                 */
+/* -------------------------------------------------------------------------- */
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// 1. Initialize Strict MCP Client
+// MCP Client (strict startup dependency)
 const mcp = new LingoMCP();
 
-// 2. Data Structures
-// In a real app, use Redis. Here, memory.
-const sockets = new Map<string, WebSocket>(); // socketId -> WS
-const userLangs = new Map<string, string>(); // socketId -> 'en-US'
+// In-memory state (replace with Redis in prod)
+const sockets = new Map<string, WebSocket>();
+const userLangs = new Map<string, LangCode>();
 
+/* -------------------------------------------------------------------------- */
+/*                              Server Startup                                 */
+/* -------------------------------------------------------------------------- */
 
-// 3. Application Logic
-async function startServer() {
+async function startServer(): Promise<void> {
   try {
-    // STARTUP GATE: Block server boot until MCP connects
-    await mcp.connect();
+    await mcp.connect(); // 🚨 hard dependency
 
-    // Only listen if MCP is healthy
-    const PORT = process.env.PORT || 3001;
+    const PORT = Number(process.env.PORT) || 3001;
     server.listen(PORT, () => {
       console.log(`[Server] Listening on port ${PORT}`);
-      console.log(`[Server] Lingo.dev Integration: ACTIVE`);
+      console.log(`[Server] Lingo.dev MCP: ACTIVE`);
     });
-
   } catch (error) {
-    console.error(' [CRITICAL STARTUP FAILURE] ');
+    console.error("[CRITICAL STARTUP FAILURE]");
     console.error(error);
-    process.exit(1); // Hard crash if Lingo is down
+    process.exit(1);
   }
 }
 
-// 4. WebSocket Flow
-wss.on('connection', (ws: WebSocket) => {
-    const socketId = 'sock_' + Math.random().toString(36).substr(2, 9);
-    sockets.set(socketId, ws);
-    
-    
-    // CRITICAL: Unconditional MCP readiness broadcast
-    const mcpReadyPayload = JSON.stringify({ type: 'MCP_READY' });
-    console.log(`[WS] Client connected: ${socketId}`);
-     ws.send(JSON.stringify({
-      type: 'INIT',
-      socketId
-     }));
-    ws.send(mcpReadyPayload);
-    console.log(`[WS] Sent MCP_READY to ${socketId}`);
-    console.log(`[Backend] MCP_READY broadcast sent to clients`);
+/* -------------------------------------------------------------------------- */
+/*                              WebSocket Logic                                */
+/* -------------------------------------------------------------------------- */
 
-    ws.on('message', async (data) => {
-        try {
-            const msg = JSON.parse(data.toString());
-            console.log(`[WS] Message from ${socketId}:`, msg.type);
-            
-            if (msg.type === 'join') {
-                userLangs.set(socketId, msg.lang);
-                console.log(`[WS] ${socketId} joined with lang: ${msg.lang}`);
-                const confirmPayload = JSON.stringify({ type: 'JOIN_CONFIRMED', lang: msg.lang });
-                ws.send(confirmPayload);
-                console.log(`[WS] Sent JOIN_CONFIRMED to ${socketId}`);
-            }
+wss.on("connection", (ws: WebSocket) => {
+  const socketId = `sock_${Math.random().toString(36).slice(2, 11)}`;
 
-            if (msg.type === 'doc_edit') {
-                // Handle document editing
-                const sourceLang = userLangs.get(socketId) || 'en-US';
-                const content = JSON.parse(msg.content).content;
-                const docId = JSON.parse(msg.content).docId;
+  sockets.set(socketId, ws);
 
-                console.log(`[WS] Document edit from ${socketId} (${sourceLang}): "${content.substring(0, 50)}..."`);
+  console.log(`[WS] Client connected: ${socketId}`);
 
-                // Update document state
+  const initPayload: InitMessage = {
+    type: "INIT",
+    socketId,
+  };
 
-                // Broadcast to all subscribers with per-recipient translation
-                const targetSocketIds = Array.from(sockets.keys());
-                
-                for (const targetId of targetSocketIds) {
-                    const targetWs = sockets.get(targetId);
-                    const targetLang = userLangs.get(targetId) || 'en-US';
+  ws.send(JSON.stringify(initPayload));
+  ws.send(JSON.stringify({ type: "MCP_READY" }));
 
-                    if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                        // Per-recipient translation
-                        const translations = await mcp.routeText(content, sourceLang, [targetLang]);
-                        const translatedContent = translations[targetLang] || content;
+  ws.on("message", async (rawData: WebSocket.RawData) => {
+    try {
+      const msg = JSON.parse(rawData.toString()) as IncomingMessage;
 
-                        console.log(`[WS] → ${targetId} (${targetLang}): "${translatedContent.substring(0, 50)}..."`);
+      console.log(`[WS] ${socketId} → ${msg.type}`);
 
-                        targetWs.send(JSON.stringify({
-                            type: 'msg',
-                            id: 'doc_' + Date.now() + '_' + targetId,
-                            sender: socketId,
-                            content: translatedContent,
-                            targetLang: targetLang,
-                            sourceLang: sourceLang
-                        }));
-                    }
-                }
-                console.log(`[WS] Document update broadcast complete`);
-            }
+      /* ----------------------------- JOIN ----------------------------- */
+      if (msg.type === "join") {
+        userLangs.set(socketId, msg.lang);
 
-            if (msg.type === 'chat') {
-                const sourceLang = userLangs.get(socketId) || 'en-US';
-                const senderText = msg.content;
-                const targetSocketIds = Array.from(sockets.keys());
+        ws.send(
+          JSON.stringify({
+            type: "JOIN_CONFIRMED",
+            lang: msg.lang,
+          })
+        );
 
-                console.log(`[WS] Processing message from ${socketId} (${sourceLang}): "${senderText}"`);
-                console.log(`[WS] Broadcasting to ${targetSocketIds.length} recipients with per-user translation`);
+        return;
+      }
 
-                // Translate individually for EACH recipient
-                for (const targetId of targetSocketIds) {
-                    const targetWs = sockets.get(targetId);
-                    const targetLang = userLangs.get(targetId) || 'en-US';
+      /* --------------------------- DOC EDIT ---------------------------- */
+      if (msg.type === "doc_edit") {
+        const sourceLang = userLangs.get(socketId) ?? "en-US";
+        const parsed = JSON.parse(msg.content) as DocEditPayload;
 
-                    if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                        // Per-recipient translation via Lingo.dev MCP
-                        const translations = await mcp.routeText(senderText, sourceLang, [targetLang]);
-                        const translatedText = translations[targetLang] || senderText;
+        for (const [targetId, targetWs] of sockets.entries()) {
+          if (targetWs.readyState !== WebSocket.OPEN) continue;
 
-                        console.log(`[WS] → ${targetId} (${targetLang}): "${translatedText}"`);
+          const targetLang = userLangs.get(targetId) ?? "en-US";
 
-                        targetWs.send(JSON.stringify({
-                            type: 'msg',
-                            id: 'msg_' + Date.now() + '_' + targetId,
-                            sender: socketId,
-                            content: translatedText,
-                            targetLang: targetLang,
-                            sourceLang: sourceLang
-                        }));
-                    }
-                }
-                console.log(`[WS] Per-recipient translation complete`);
-            }
+          const translations = await mcp.routeText(
+            parsed.content,
+            sourceLang,
+            [targetLang]
+          );
 
-        } catch (e) {
-            console.error(`[WS] Message handling error for ${socketId}:`, e);
+          const outgoing: OutgoingMessage = {
+            type: "msg",
+            id: `doc_${Date.now()}_${targetId}`,
+            sender: socketId,
+            content: translations[targetLang] ?? parsed.content,
+            sourceLang,
+            targetLang,
+          };
+
+          targetWs.send(JSON.stringify(outgoing));
         }
-    });
 
-    ws.on('close', () => {
-        sockets.delete(socketId);
-        userLangs.delete(socketId);
-        console.log(`[WS] Client disconnected: ${socketId}`);
-    });
+        return;
+      }
 
-    ws.on('error', (err:Error) => {
-        console.error(`[WS] WebSocket error for ${socketId}:`, err);
-    });
+      /* ------------------------------ CHAT ----------------------------- */
+      if (msg.type === "chat") {
+        const sourceLang = userLangs.get(socketId) ?? "en-US";
+
+        for (const [targetId, targetWs] of sockets.entries()) {
+          if (targetWs.readyState !== WebSocket.OPEN) continue;
+
+          const targetLang = userLangs.get(targetId) ?? "en-US";
+
+          const translations = await mcp.routeText(
+            msg.content,
+            sourceLang,
+            [targetLang]
+          );
+
+          const outgoing: OutgoingMessage = {
+            type: "msg",
+            id: `msg_${Date.now()}_${targetId}`,
+            sender: socketId,
+            content: translations[targetLang] ?? msg.content,
+            sourceLang,
+            targetLang,
+          };
+
+          targetWs.send(JSON.stringify(outgoing));
+        }
+      }
+    } catch (err) {
+      console.error(`[WS] Message error (${socketId})`, err);
+    }
+  });
+
+  ws.on("close", () => {
+    sockets.delete(socketId);
+    userLangs.delete(socketId);
+    console.log(`[WS] Client disconnected: ${socketId}`);
+  });
+
+  ws.on("error", (err: Error) => {
+    console.error(`[WS] Error (${socketId})`, err);
+  });
 });
+
+/* -------------------------------------------------------------------------- */
+/*                                  Start                                     */
+/* -------------------------------------------------------------------------- */
 
 startServer();
