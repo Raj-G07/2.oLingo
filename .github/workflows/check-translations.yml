@@ -27,4 +27,4 @@ jobs:
         working-directory: linguasync-client
         env:
           LINGODOTDEV_API_KEY: ${{ secrets.LINGODOTDEV_API_KEY}}
-        run: npx lingo.dev@latest run --frozen
+        run: npx lingo.dev@latest run 
