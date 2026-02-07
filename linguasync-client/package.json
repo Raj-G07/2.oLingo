@@ -4,8 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "npx lingo compile --out-dir=./public/locales --optimize",
-    "build": "npm run prebuild && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint && npx lingo extract --check"
   },
