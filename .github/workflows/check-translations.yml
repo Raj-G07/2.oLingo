@@ -25,4 +25,6 @@ jobs:
       # Run lingo.dev ONLY on client
       - name: Check client translations
         working-directory: linguasync-client
+        env:
+          LINGODOTDEV_API_KEY: ${{ secrets.LINGODOTDEV_API_KEY}}
         run: npx lingo.dev@latest run --frozen
