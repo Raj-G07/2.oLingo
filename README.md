@@ -22,6 +22,9 @@ LinguaSync is a real-time localization and synchronization platform designed for
 - **Real-time**: [ws (WebSockets)](https://github.com/websockets/ws)
 - **Localization**: [lingo.dev](https://lingo.dev/)
 
+## Demo Video
+- [LinguaSync Demo Video](https://youtu.be/ilpfp7JEXdk?si=uMa1lzotRwKt_T4r)
+  
 ## Getting Started
 
 ### Prerequisites
